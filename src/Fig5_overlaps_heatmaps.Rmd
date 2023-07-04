@@ -1,0 +1,302 @@
+---
+title: "Fig5 and 5S overlaps, Venn diagrams, and heatmaps for patient microarrays"
+output:
+  prettydoc::html_pretty:
+    theme: hpstr
+    highlight: github
+editor_options: 
+  chunk_output_type: console
+---
+
+## Overview
+
+### This notebook compares genes that correlate with NT5E across 3 Ewing sarcoma patient tumor microarrays (217 genes with R greater than 0.6 in all 6) with the top 200 markers (by fold change) of NT5E expressing vs. negative cells in the 9 Ewing sarcoma cell line CITE-seq dataset. This results in a core 28-gene list associated with NT5E high cells/tumors.
+
+## Set directories and figure settings
+
+```{r}
+here::i_am("src/Fig5_overlaps_heatmaps.Rmd")
+library(here)
+here()
+```
+```{r}
+#Set figure outputs
+knitr::opts_chunk$set(dpi=300,
+                      echo=TRUE, warning=FALSE, message=FALSE)
+knitr::opts_chunk$set(dev.args=list(bg="transparent"))
+knitr::opts_chunk$set(fig.path = "C:/Users/ewrenn/OneDrive - SCH/CD73_paper_2023/paper files/MANUSCRIPT_R_PROJ/2023_CD73_manuscript_GITHUB/figures/FIG5_FIG5S_pt-microarray_",  dev = c("svglite", "png"))
+```
+
+```{r}
+library(dplyr)
+library(tidyr)
+library(Vennerable)
+library(pheatmap)
+library(Seurat)
+library(msigdbr)
+library(dittoSeq)
+library(arsenal)
+library(Biobase)
+```
+
+
+
+## Read and sort data (correlations of NT5E vs. all other genes across 3 patient microarrays)
+
+```{r}
+delattre <- read.csv(file=here("gene_lists","delattre_subset_corr_NT5E.csv"), header=TRUE)
+savola <- read.csv(file=here("gene_lists","savola_subset_corr_NT5E.csv"), header=TRUE)
+surdez <- read.csv(file=here("gene_lists","surdez_subset_corr_NT5E.csv"), header=TRUE)
+
+```
+
+```{r}
+#sort data, check that NT5E corr=1
+delattre <- delattre %>% arrange(desc(NT5E))
+savola <- savola %>% arrange(desc(NT5E))
+surdez <- surdez %>% arrange(desc(NT5E))
+
+head(delattre, n=10)
+head(savola, n=10)
+head(surdez, n=10)
+
+tail(delattre, n=10)
+tail(savola, n=10)
+tail(surdez, n=10)
+```
+
+```{r}
+#select just the genes which Pearson correlate with NT5E >0.6, or <-0.6
+
+surdez_positive_corr <- surdez %>% filter(NT5E >= 0.6)
+surdez_negative_corr <- surdez %>% filter(NT5E <= -0.6)
+
+delattre_positive_corr <- delattre %>% filter(NT5E >= 0.6)
+delattre_negative_corr <- delattre %>% filter(NT5E <= -0.6)
+
+savola_positive_corr <- savola %>% filter(NT5E >= 0.6)
+savola_negative_corr <- savola %>% filter(NT5E <= -0.6)
+```
+
+```{r}
+#find overlap (218 positive corr genes)
+shared_pos <- inner_join(delattre_positive_corr, savola_positive_corr, by='X')
+shared_pos <- inner_join(shared_pos, surdez_positive_corr, by='X')
+shared_pos_genes <- shared_pos$X
+```
+
+
+## Venn diagram overlap positive and negatively correlated genes
+
+```{r}
+#get gene names for anything with a strong positive or negative correlation
+
+surdez_up_genes <- as.character(unlist(surdez_positive_corr[1]))
+surdez_dn_genes <- as.character(unlist(surdez_negative_corr[1]))
+
+delattre_up_genes <- as.character(unlist(delattre_positive_corr[1]))
+delattre_dn_genes <- as.character(unlist(delattre_negative_corr[1]))
+
+savola_up_genes <- as.character(unlist(savola_positive_corr[1]))
+savola_dn_genes <- as.character(unlist(savola_negative_corr[1]))
+```
+
+
+```{r}
+#make venn diagram of positive and negatively correlating genes for each of the 4 microarrays
+upgenes <- list(delattre=delattre_up_genes, savola=savola_up_genes, surdez=surdez_up_genes)
+dngenes <- list(delattre=delattre_dn_genes, savola=savola_dn_genes, surdez=surdez_dn_genes)
+V_upgenes <- Venn(upgenes)
+V_dngenes <- Venn(dngenes)
+
+
+plot(V_upgenes, type="circles", doWeights =TRUE)
+plot(V_dngenes, type="circles", doWeights =TRUE)
+
+```
+## Overlap with top 200 markers of NT5E+ cells (by Log2FC) by single cell sequencing
+
+```{r}
+s9_markers <- c(read.delim(file=here("gene_lists","s9_NT5E_markers_pooled.txt"),  header=T))
+s9_markers <- data.frame(s9_markers, row.names = 1)
+s9_top_200 <- s9_markers %>% arrange(desc(avg_log2FC))
+s9_top_200 <- s9_top_200[1:200,]
+s9_top_200_genes <- row.names(s9_top_200)
+write.csv(s9_top_200, file=here("gene_lists","s9_NT5E_top_200_markers.csv"))
+```
+
+```{r}
+#merge single cell and microarray markers of NT5E-hi state, 28 top candidates
+scseq_microarray_markers <- intersect(s9_top_200_genes, shared_pos_genes)
+scseq_microarray_markers
+```
+
+
+#Microarray gene set scoring and heatmaps, use Seurat to score in the same manner as 9 cell line single cell dataset
+
+```{r}
+gse17679_savola <- read.table(file=here("working_data", "gse17679_savola_edata.txt"), row.names = 1, header=T) 
+gse17679_savola <- gse17679_savola[,-1]
+
+gse34620_delattre <-  read.table(file=here("working_data", "gse34620_delattre_edata.txt"), row.names = 1, header=T)
+gse34620_delattre <- gse34620_delattre[,-1]
+
+gse142162_surdez <-  read.table(file=here("working_data", "gse142162_surdez_edata.txt"), row.names = 1, header=T)
+gse142162_surdez <- gse142162_surdez[,-1]
+
+```
+
+
+```{r}
+#Make Seurat objects of microarray data to prepare heatmaps in same manner as 9 cell line single cell sequencing data
+delattre_seurat <- CreateSeuratObject(gse34620_delattre, project = "SeuratProject", assay = "RNA",
+  min.cells = 0, min.features = 0, names.field = 1,
+  names.delim = "_", meta.data = NULL)
+savola_seurat <- CreateSeuratObject(gse17679_savola, project = "SeuratProject", assay = "RNA",
+  min.cells = 0, min.features = 0, names.field = 1,
+  names.delim = "_", meta.data = NULL)
+surdez_seurat <- CreateSeuratObject(gse142162_surdez, project = "SeuratProject", assay = "RNA",
+  min.cells = 0, min.features = 0, names.field = 1,
+  names.delim = "_", meta.data = NULL)
+
+FeatureScatter(delattre_seurat, feature1 = "NT5E", feature2 = scseq_microarray_markers[20], pt.size=3)
+FeatureScatter(savola_seurat, feature1 = "NT5E", feature2 = scseq_microarray_markers[20], pt.size=3)
+FeatureScatter(surdez_seurat, feature1 = "NT5E", feature2 = scseq_microarray_markers[20], pt.size=3)
+
+```
+
+```{r}
+#load gene lists
+
+#Load gene sets from msigdbr and text files
+H <- msigdbr(species = "Homo sapiens", category ="H")
+EMT <- filter(H, gs_name == "HALLMARK_EPITHELIAL_MESENCHYMAL_TRANSITION")
+EMT <- list(EMT$gene_symbol)
+
+CGP <- msigdbr(species = "Homo sapiens", category = "C2", subcategory = "CGP")
+kinsey_repressed <- filter(CGP, gs_name == "KINSEY_TARGETS_OF_EWSR1_FLII_FUSION_DN")
+kinsey_repressed <- list(kinsey_repressed$gene_symbol)
+kinsey_activated <- filter(CGP, gs_name == "KINSEY_TARGETS_OF_EWSR1_FLII_FUSION_UP")
+kinsey_activated <- list(kinsey_activated$gene_symbol)
+
+#Aynaud et al. 2020 list of 78 direct EWS::FLI1 targets
+IC_EWS_78 <- c(read.delim(file=here("gene_lists","ICEWS_genes.txt"), header=FALSE))
+
+#GO Biological Processes 2021 ECM Organization
+ECM_go <- c(read.delim(file=here("gene_lists","gobp_2021_ecm_organization.txt"), header=FALSE))
+
+
+```
+
+
+
+```{r}
+#Add NT5E expression and gene sets as module scores
+delattre_seurat <-AddModuleScore(delattre_seurat, features="NT5E", name="NT5E_count")
+savola_seurat <-AddModuleScore(savola_seurat, features="NT5E", name="NT5E_count")
+surdez_seurat <-AddModuleScore(surdez_seurat, features="NT5E", name="NT5E_count")
+
+
+
+delattre_seurat <-AddModuleScore(delattre_seurat, features=c(EMT), name="EMT")
+savola_seurat <-AddModuleScore(savola_seurat, features=c(EMT), name="EMT")
+surdez_seurat <-AddModuleScore(surdez_seurat, features=c(EMT), name="EMT")
+
+
+delattre_seurat <-AddModuleScore(delattre_seurat, features=c(ECM_go), name="ECM_go")
+savola_seurat <-AddModuleScore(savola_seurat, features=c(ECM_go), name="ECM_go")
+surdez_seurat <-AddModuleScore(surdez_seurat, features=c(ECM_go), name="ECM_go")
+
+
+delattre_seurat <-AddModuleScore(delattre_seurat, features=c(kinsey_activated), name="kinsey_up")
+savola_seurat <-AddModuleScore(savola_seurat, features=c(kinsey_activated), name="kinsey_up")
+surdez_seurat <-AddModuleScore(surdez_seurat, features=c(kinsey_activated), name="kinsey_up")
+
+
+delattre_seurat <-AddModuleScore(delattre_seurat, features=c(kinsey_repressed), name="kinsey_dn")
+savola_seurat <-AddModuleScore(savola_seurat, features=c(kinsey_repressed), name="kinsey_dn")
+surdez_seurat <-AddModuleScore(surdez_seurat, features=c(kinsey_repressed), name="kinsey_dn")
+
+
+delattre_seurat <-AddModuleScore(delattre_seurat, features=c(IC_EWS_78), name="IC_EWS_78")
+savola_seurat <-AddModuleScore(savola_seurat, features=c(IC_EWS_78), name="IC_EWS_78")
+surdez_seurat <-AddModuleScore(surdez_seurat, features=c(IC_EWS_78), name="IC_EWS_78")
+
+
+
+```
+
+```{r}
+# export module scores as pdata
+
+mod_delattre <- delattre_seurat[[]]
+mod_surdez <- surdez_seurat[[]]
+mod_savola <- savola_seurat[[]]
+
+```
+
+```{r}
+#read pdata from each microarray
+pdata_savola <- read.delim(file=here("working_data", "gse17679_savola_pdata.txt"), row.names = 1, header=T) 
+pdata_delattre <-  read.delim(file=here("working_data", "gse34620_delattre_pdata.txt"), row.names = 1, header=T)
+pdata_surdez <-  read.delim(file=here("working_data", "gse142162_surdez_pdata.txt"), row.names = 1, header=T)
+
+pdata_savola <- pdata_savola [,-1]
+pdata_delattre <- pdata_delattre [,-1]
+pdata_surdez <- pdata_surdez [,-1]
+
+#transpose
+pdata_savola <- as.data.frame(t(pdata_savola))
+pdata_delattre <- as.data.frame(t(pdata_delattre))
+pdata_surdez <- as.data.frame(t(pdata_surdez))
+
+```
+
+```{r}
+#compare dataframes, ensure same row features
+summary(arsenal::comparedf(pdata_savola, mod_savola))
+summary(arsenal::comparedf(pdata_delattre, mod_delattre))
+summary(arsenal::comparedf(pdata_surdez, mod_surdez))
+```
+
+```{r}
+#prepare combined pdata with gene set modules and save
+pdata_mod_savola <- merge(pdata_savola, mod_savola, by="row.names")
+pdata_mod_delattre <- merge(pdata_delattre, mod_delattre, by="row.names")
+pdata_mod_surdez <- merge(pdata_surdez, mod_surdez, by="row.names")
+
+write.csv(pdata_mod_savola, file=here("working_data","savola_pdata_w_modules.csv"))
+write.csv(pdata_mod_delattre, file=here("working_data","delattre_pdata_w_modules.csv"))
+write.csv(pdata_mod_surdez, file=here("working_data","surdez_pdata_w_modules.csv"))
+
+```
+
+```{r update seurat objects}
+#heatmap again with seurat data but using pdata
+delattre_seurat_hmap <- CreateSeuratObject(gse34620_delattre, project = "SeuratProject", assay = "RNA",
+  min.cells = 0, min.features = 0, names.field = 1,
+  names.delim = "_", meta.data = pdata_mod_delattre)
+savola_seurat_hmap <- CreateSeuratObject(gse17679_savola, project = "SeuratProject", assay = "RNA",
+  min.cells = 0, min.features = 0, names.field = 1,
+  names.delim = "_", meta.data = pdata_mod_savola)
+surdez_seurat_hmap <- CreateSeuratObject(gse142162_surdez, project = "SeuratProject", assay = "RNA",
+  min.cells = 0, min.features = 0, names.field = 1,
+  names.delim = "_", meta.data = pdata_mod_surdez)
+
+```
+
+
+```{r savola_hmap, fig.height=6, fig.width=12}
+dittoHeatmap(savola_seurat, scseq_microarray_markers, annot.by = c("ECM_go1", "kinsey_up1", "kinsey_dn1"),   heatmap.colors = colorRampPalette(c("blue", "white", "red"))(50))
+```
+
+```{r delattre_hmap, fig.height=6, fig.width=12}
+dittoHeatmap(delattre_seurat, scseq_microarray_markers, annot.by = c("ECM_go1", "kinsey_up1" ,"kinsey_dn1"),   heatmap.colors = colorRampPalette(c("blue", "white", "red"))(50))
+```
+
+```{r surdez_hmap, fig.height=6, fig.width=12}
+dittoHeatmap(surdez_seurat, scseq_microarray_markers, annot.by = c("ECM_go1", "kinsey_up1", "kinsey_dn1"),   heatmap.colors = colorRampPalette(c("blue", "white", "red"))(50))
+
+```
+
+

@@ -1,0 +1,162 @@
+---
+title: "Fig1A A673 CHLA10 scSeq mesenchyme development vs. E::F modulated genes"
+output:
+  prettydoc::html_pretty:
+    theme: hpstr
+    highlight: github
+editor_options: 
+  chunk_output_type: console
+---
+
+
+## Overview
+
+### This notebook analyzes single cell sequencing data from 2 cell lines (A673 and CHLA10, Apfelbaum et al. 2022) and compares markers of cells with high GO:BP Mesenchymal Development expression in that dataset to genes that are repressed by EWS::FLI1 (Kinsey et al. 2006), generating Figure 1A and Supplementary Table 2 (52 EWS::FLI1 repressed genes marking highly mesenchymal cells)
+
+```{r setup}
+
+#set directory
+here::i_am("src/Fig1A_A673-CHLA10-scSeq.Rmd")
+library(here)
+here()
+```
+
+
+## Set directories and figure settings
+
+```{r}
+#Set figure settings and outputs
+knitr::opts_chunk$set(dpi=300,
+                      echo=TRUE, warning=FALSE, message=FALSE)
+knitr::opts_chunk$set(dev.args=list(bg="transparent"))
+knitr::opts_chunk$set(fig.path = "C:/Users/ewrenn/OneDrive - SCH/CD73_paper_2023/paper files/MANUSCRIPT_R_PROJ/2023_CD73_manuscript_GITHUB/figures/FIG1A_",  dev = c("svglite", "png"))
+```
+
+## Load libraries
+
+```{r message=FALSE, warning=FALSE}
+#load packages
+library(Seurat)
+library(cowplot)
+library(ggplot2)
+library(dplyr)
+library(umap)
+library(SummarizedExperiment)
+library(SingleCellExperiment)
+library(tidyverse)
+library(msigdbr)
+library(Vennerable)
+```
+
+## Load single cell sequencing data of 2 EwS cell lines (A673, CHLA10)
+
+```{r}
+#Read CDS ojbect of 2 cell lines scseq, from prior work Apfelbaum et al. 2022
+cds <- readRDS(here("working_data", "A673_CHLA10_scseq.rds")) #cds_2_seurat
+```
+## Display UMAP reduction
+
+```{r a673-chla10-umap}
+Idents(object=cds) <- "celltype"
+DimPlot(cds, reduction = 'umap', pt.size=1)
+```
+## Load and score MSigDB gene sets
+
+```{r loading-gene-sets}
+#load EWS::FLI1 regulated genesets (Kinsey et al. 2006) downloaded from msigdb
+CGP <- msigdbr(species = "Homo sapiens", category = "C2", subcategory = "CGP")
+
+kinsey_repressed <- dplyr::filter(CGP, gs_name == "KINSEY_TARGETS_OF_EWSR1_FLII_FUSION_DN")
+kinsey_repressed <- list(kinsey_repressed$gene_symbol)
+
+
+kinsey_activated <- dplyr::filter(CGP, gs_name == "KINSEY_TARGETS_OF_EWSR1_FLII_FUSION_UP")
+kinsey_activated <- list(kinsey_activated$gene_symbol)
+
+
+#load mesenchyme development geneset from msigdb (GO:BP)
+C5 <- msigdbr(species = "Homo sapiens", category = "C5", subcategory="GO:BP")
+mesenchyme_dev_go <- dplyr::filter(C5, gs_name == "GOBP_MESENCHYME_DEVELOPMENT")
+mesenchyme_dev <- list(mesenchyme_dev_go$gene_symbol)
+
+```
+
+```{r module-scores}
+#add module score for each cell for EWS::FLI1 regulated and mesenchyme development gene sets
+DefaultAssay(cds) <- "RNA"
+cds <- AddModuleScore(cds, features=kinsey_repressed, name="kinsey_repressed")
+cds <- AddModuleScore(cds, features=kinsey_activated, name="kinsey_activated")
+cds <- AddModuleScore(cds, features=mesenchyme_dev, name="mesenchyme_development")
+```
+
+## Graph correlation of EWS::FLI1 modulated gene sets (Kinsey et al. 2006) and Mesenchyme Development
+```{r EFdn-mes-scatter}
+#scatter plot of correlation EWS::FLI1 repressed and mesenchyme module scores
+FeatureScatter(cds, feature1="mesenchyme_development1", feature2="kinsey_repressed1", span=TRUE)
+FeatureScatter(cds, feature1="mesenchyme_development1", feature2="kinsey_activated1", span=TRUE)
+```
+
+## Find markers of mesenchymal cells and overlap with EWS::FLI1 repressed
+
+```{r mes_vln}
+#visualize mesenchyme development expression across cell lines
+VlnPlot(cds, features = "mesenchyme_development1", group.by = "celltype", pt.size = 0.2)
+```
+
+```{r}
+#identify distribution of mesenchyme development gene set score
+quantile(cds$mesenchyme_development1, probs=seq(0, 1, 0.1))
+mes_cutoff <- quantile(cds$mesenchyme_development1, probs=0.9)
+mes_cutoff <- unname(mes_cutoff)
+mes_cutoff
+#90th percentile = 0.033, max=0.13
+
+```
+
+
+```{r}
+#set cutoff at 90% percentile and find marker genes
+metadata_df<-cds@meta.data %>% as.data.frame() %>% 
+  dplyr::mutate(mes_threshold = ifelse(mesenchyme_development1>mes_cutoff, "high_mes", "low_mes" ))
+
+cds@meta.data<- metadata_df
+SetIdent(cds, value = cds@meta.data$mes_threshold)
+
+mes_cells<- FindMarkers(cds, ident.1 = "high_mes", ident.2 = "low_mes", group.by = "mes_threshold")
+library(tibble)
+mes_cells <- tibble::rownames_to_column(mes_cells, "gene")
+
+write.table(mes_cells, file=here("gene_lists", "A673_CHLA10_mes_high_v_low_top_markers.txt"), sep="\t",quote=FALSE,col.names = TRUE, row.names = FALSE)
+
+
+```
+
+
+
+
+```{r}
+#top ~300 markers high mes cells in A673 and CHLA10 by log2FC
+mes_cells_top <- mes_cells %>% filter(avg_log2FC >= 0.3687)
+mes_top_genes <- mes_cells_top$gene
+
+```
+
+
+```{r 1B_venn, echo=TRUE}
+#make venn diagram of positive and negatively correlating genes for each of the 4 microarrays
+mes_top_unlist <- unlist(mes_top_genes)
+kinsey_unlist <- unlist(kinsey_repressed)
+kinsey_mes_overlap <- intersect(mes_top_unlist,kinsey_unlist)
+write.table(kinsey_mes_overlap, file=here("gene_lists","kinsey_dn_mes_marker_overlap_52.txt"), quote=FALSE, row.names=FALSE, col.names = FALSE)
+
+kinsey_mes <- list(kinsey=kinsey_unlist, mes_top=mes_top_unlist)
+V_kinsey_mes <- Venn(kinsey_mes)
+plot(V_kinsey_mes, type="circles", doWeights =TRUE)
+```
+
+## Session info
+
+```{r}
+sessionInfo()
+```
+

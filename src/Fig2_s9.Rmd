@@ -1,0 +1,304 @@
+---
+title: "Fig2 and 2S s9 UMAPs and gene set enrichment analysis"
+output:
+  prettydoc::html_pretty:
+    theme: hpstr
+    highlight: github
+editor_options: 
+  chunk_output_type: console
+---
+## Overview
+
+### This notebook analyzes a 9 Ewing sarcoma cell line CITE-seq object to generate figures in Fig2 and Supplemental Table 4 (markers of NT5E expressing cells) related to NT5E, EMT, ECM, and EWS::FLI1 regulated gene sets within and across cell lines. 
+
+```{r}
+setwd("C:/Users/ewrenn/OneDrive - SCH/CD73_paper_2023/paper files/MANUSCRIPT_R_PROJ/2023_CD73_manuscript_GITHUB")
+here::i_am("src/Fig2_s9.Rmd")
+library(here)
+here()
+```
+
+
+## Set directories and figure settings
+
+```{r, setup}
+#Set figure outputs
+knitr::opts_knit$set(root.dir = "C:/Users/ewrenn/OneDrive - SCH/CD73_paper_2023/paper files/MANUSCRIPT_R_PROJ/2023_CD73_manuscript_GITHUB")
+knitr::opts_chunk$set(dpi=300,
+                      echo=TRUE, warning=FALSE, message=FALSE)
+knitr::opts_chunk$set(dev.args=list(bg="transparent"))
+knitr::opts_chunk$set(fig.path = "C:/Users/ewrenn/OneDrive - SCH/CD73_paper_2023/paper files/MANUSCRIPT_R_PROJ/2023_CD73_manuscript_GITHUB/figures/FIG2_FIG2S_9-line-scseq_",  dev = c("svglite", "png"))
+```
+
+## Load libraries
+
+```{r message=FALSE, warning=FALSE}
+#load packages
+library(cowplot)
+library(ggplot2)
+library(dplyr)
+library(umap)
+library(RBGL)
+library(Vennerable)
+library(tibble)
+library(pheatmap)
+library(Seurat)
+library(SummarizedExperiment)
+library(SingleCellExperiment)
+library(sf)
+library(tidyverse)
+library(escape)
+library(dittoSeq)
+library(SeuratObject)
+library(msigdbr)
+library(Hmisc)
+```
+
+## Load 9 cell line CITE-seq object
+
+```{r}
+#load 9 cell line CITE-seq and single cell sequencing object
+s9 <- readRDS(here("working_data", "2022-6-3_aa_genename_cite_9.rds")) 
+```
+
+```{r umap_s9}
+#Visualize 9 cell line object
+DefaultAssay(s9) <- "SCT"
+DimPlot(s9)
+Idents(object = s9) <- "CellLine"
+DimPlot(s9)
+```
+
+## Load and assign gene module scores
+
+```{r}
+#Load gene sets from msigdbr and text files
+H <- msigdbr(species = "Homo sapiens", category ="H")
+EMT <- filter(H, gs_name == "HALLMARK_EPITHELIAL_MESENCHYMAL_TRANSITION")
+EMT <- list(EMT$gene_symbol)
+
+CGP <- msigdbr(species = "Homo sapiens", category = "C2", subcategory = "CGP")
+kinsey_repressed <- filter(CGP, gs_name == "KINSEY_TARGETS_OF_EWSR1_FLII_FUSION_DN")
+kinsey_repressed <- list(kinsey_repressed$gene_symbol)
+kinsey_activated <- filter(CGP, gs_name == "KINSEY_TARGETS_OF_EWSR1_FLII_FUSION_UP")
+kinsey_activated <- list(kinsey_activated$gene_symbol)
+
+#Aynaud et al. 2020 list of 78 direct EWS::FLI1 targets
+IC_EWS_78 <- c(read.delim(file="./gene_lists/ICEWS_genes.txt", header=FALSE))
+
+#GO Biological Processes 2021 ECM Organization
+ECM_go <- c(read.delim(file="./gene_lists/gobp_2021_ecm_organization.txt", header=FALSE))
+
+
+```
+
+
+```{r}
+#Add score to each cell for each gene set using AddModuleScore function of Seurat
+s9 <- AddModuleScore(s9, features=EMT, name="EMT")
+s9 <- AddModuleScore(s9, features=kinsey_repressed, name="kinsey_repressed")
+s9 <- AddModuleScore(s9, features=kinsey_activated, name="kinsey_activated")
+s9 <- AddModuleScore(s9, features=IC_EWS_78, name="IC_EWS_78")
+s9 <- AddModuleScore(s9, features="NT5E", name="NT5E_count")
+s9 <- AddModuleScore(s9, features=ECM_go, name="ECM_GO")
+```
+
+
+```{r s9-NT5E-CD73}
+#Plot RNA and cell surface NT5E/CD73 expression
+FeaturePlot(s9, features="rna_NT5E", cols=c('gray','deeppink3','blueviolet'), max.cutoff="q90")
+FeaturePlot(s9, features="adt_CD73", cols=c('gray','deeppink3','blueviolet'), max.cutoff="q90")
+```
+
+
+## UMAPs of gene set expression across 9 cell lines
+
+```{r umap_gene_sets}
+#Plot gene sets of interest
+FeaturePlot(s9, features="EMT1", cols = c("lightgray","deeppink3"), min.cutoff="q1", max.cutoff ="q90")
+FeaturePlot(s9, features="kinsey_repressed1", cols = c("lightgray","deeppink3"),  min.cutoff="q1", max.cutoff ="q90")
+FeaturePlot(s9, features="kinsey_activated1", cols = c("lightgray","deeppink3"),  min.cutoff="q1", max.cutoff ="q90")
+FeaturePlot(s9, features="IC_EWS_781", cols = c("lightgray","deeppink3"),  min.cutoff="q1", max.cutoff ="q90")
+```
+
+## Scatter plots of E::F regulated and other gene sets
+
+```{r scatter_EFlo_sets, fig.height=6, fig.width=6}
+#Show correlation of EWS::FLI1 regulated and EMT/ECM gene sets
+FeatureScatter(s9, feature1="kinsey_repressed1", feature2="kinsey_activated1")
+FeatureScatter(s9, feature1="kinsey_repressed1", feature2="IC_EWS_781")
+
+FeatureScatter(s9, feature1="kinsey_activated1", feature2="ECM_GO1")
+FeatureScatter(s9, feature1="kinsey_activated1", feature2="EMT1")
+
+FeatureScatter(s9, feature1="IC_EWS_781", feature2="ECM_GO1")
+FeatureScatter(s9, feature1="IC_EWS_781", feature2="EMT1")
+               
+```
+
+## Count NT5E+ cells
+
+```{r}
+#determine the number of NT5E+ cells
+DefaultAssay(s9) <- 'RNA'
+sum(GetAssayData(object = s9, slot = "data")["NT5E",]>0)
+DefaultAssay(s9) <- 'ADT'
+sum(GetAssayData(object = s9, slot = "data")["CD73",]>1)
+
+#repeat for individual cell lines by subsetting CDS file
+s9_A673 <- subset(x=s9, idents="A673")
+DefaultAssay(s9_A673) <- 'RNA'
+sum(GetAssayData(object = s9_A673, slot = "data")["NT5E",]>0)
+```
+
+## Differential analysis for pooled lines
+```{r}
+#set to SCT and make a new dataframe with the gene data of interest (NT5E)
+DefaultAssay(s9) <- 'SCT'
+genes<- "sct_NT5E"
+genes_interest<- FetchData(object= s9, vars= c(genes)) %>%
+  as.data.frame() %>%
+  tibble::rownames_to_column("barcode")
+
+
+#for subsetting positive vs negative/nearly negative
+Metaa<- s9@meta.data %>% as.data.frame() %>%  tibble::rownames_to_column("barcode") %>% dplyr::left_join(genes_interest) %>% 
+  dplyr::mutate(NT5E_threshold = dplyr::case_when(sct_NT5E < 0.5 ~ "negative", 
+                                                 sct_NT5E > 0.5  ~ "positive")) 
+s9@meta.data<- Metaa
+SetIdent(s9, value = s9@meta.data$NT5E_threshold)
+
+#DE analysis to get marker genes
+NT5E_cells <-FindMarkers(s9, ident.1 = "positive", ident.2 = "negative", group.by = "NT5E_threshold")
+
+NT5E_cell_markers <- tibble::rownames_to_column(NT5E_cells, "gene")
+
+#export as table 
+write.table(NT5E_cell_markers,"./gene_lists/s9_NT5E_markers_pooled.txt",sep="\t",quote=FALSE,col.names = TRUE, row.names = FALSE)                                             
+
+#repeat for individual cell lines
+```
+
+
+```{r}
+s9_markers <- c(read.delim(file=here("gene_lists","s9_NT5E_markers_pooled.txt"),  header=T))
+s9_markers <- data.frame(s9_markers, row.names = 1)
+s9_top_200 <- s9_markers %>% arrange(desc(avg_log2FC))
+s9_top_200 <- s9_top_200[1:200,]
+s9_top_200_genes <- row.names(s9_top_200)
+```
+
+```{r}
+EMT_chr <- unlist(EMT)
+ECM_chr <- unlist(ECM_go)
+kinsey_dn_chr <- unlist(kinsey_repressed)
+kinsey_up_chr <- unlist(kinsey_activated)
+NABA_matrisome <- read.csv(file=here("working_data", "Hs_Matrisome_Masterlist_Naba et al_2012.xlsx - Hs_Matrisome_Masterlist.csv"))
+NABA_genes <- NABA_matrisome$Gene.Symbol
+
+markers_EMT_overlap <- intersect(EMT_chr, s9_top_200_genes) #46 overlapping
+```
+
+## Venn diagram EMT genes, ECM genes, NT5E+ markers
+
+```{r venn_EMT_NABA}
+HEMT_markers_NABA_list <- list(H_EMT = EMT_chr, NABA=NABA_genes, markers=s9_top_200_genes)
+V_HEMT_markers_NABA <- Venn(HEMT_markers_NABA_list)
+plot(V_HEMT_markers_NABA, type="circles", doWeights =TRUE)
+
+```
+
+```{r Venn_EMT_ECM}
+HEMT_markers_ECM_list <- list(H_EMT = EMT_chr, ECMorg=ECM_chr, markers=s9_top_200_genes)
+V_HEMT_markers_ECM <- Venn(HEMT_markers_ECM_list)
+plot(V_HEMT_markers_ECM, type="circles", doWeights =TRUE)
+
+```
+
+
+```{r Venn_overlap_NABA}
+
+EMT_NABA_list <- list(EMT_NT5E = markers_EMT_overlap, NABA=NABA_genes)
+V_EMT_NABA <- Venn(EMT_NABA_list)
+plot(V_EMT_NABA, type="circles", doWeights =TRUE)
+
+```
+
+
+```{r Venn_overlap_ECM}
+
+EMT_ECM_list <- list(EMT_NT5E = markers_EMT_overlap, ECMorg=ECM_chr)
+V_EMT_ECM <- Venn(EMT_ECM_list)
+plot(V_EMT_ECM, type="circles", doWeights =TRUE)
+
+```
+
+## ssGSEA for NT5E+ cells
+
+```{r}
+#Define gene sets of interest
+gsea_gene_sets <- list(H_EMT=EMT_chr, ECMorg=ECM_chr, NABA=NABA_genes, kinsey_up=kinsey_up_chr, kinsey_dn=kinsey_dn_chr)
+```
+
+```{r}
+#Use escape package for gene set enrichment
+ES.s9 <- enrichIt(obj = s9, 
+                   gene.sets = gsea_gene_sets, 
+                   groups = 1000, cores = 2) 
+                
+```
+
+
+```{r}
+#Add enrichment scores as metadata for future graphs if needed
+s9 <- Seurat::AddMetaData(s9, ES.s9$H_EMT, "Hallmark_EMT_enrich")
+s9 <- Seurat::AddMetaData(s9, ES.s9$ECMorg, "ECM_organization_enrich")
+s9 <- Seurat::AddMetaData(s9, ES.s9$NABA, "NABA_matrisome_enrich")
+s9 <- Seurat::AddMetaData(s9, ES.s9$kinsey_up, "Kinsey_activated_enrich")
+s9 <- Seurat::AddMetaData(s9, ES.s9$kinsey_dn, "Kinsey_repressed_enrich")
+```
+
+```{r}
+nt5e_threshold_values <- s9$NT5E_threshold
+nt5e_threshold_values <-as.data.frame(nt5e_threshold_values)
+ES.s9_NT5E <- merge(ES.s9, nt5e_threshold_values, by='row.names')
+```
+
+
+```{r double_violin_NES}
+splitEnrichment(ES.s9_NT5E, split = "nt5e_threshold_values", gene.set = "H_EMT")
+
+
+splitEnrichment(ES.s9_NT5E, split = "nt5e_threshold_values", gene.set = "kinsey_up")
+
+
+splitEnrichment(ES.s9_NT5E, split = "nt5e_threshold_values", gene.set = "kinsey_dn")
+
+
+splitEnrichment(ES.s9_NT5E, split = "nt5e_threshold_values", gene.set = "NABA")
+
+
+splitEnrichment(ES.s9_NT5E, split = "nt5e_threshold_values", gene.set = "ECMorg")
+```
+
+
+
+
+```{r}
+
+output <- getSignificance(ES.s9_NT5E, 
+                          group = "nt5e_threshold_values",
+                          fit = "T.test")
+
+write.csv(output, file=here("figures","s9_gsea_statistics.csv"))
+```
+
+
+## Session info
+```{r}
+sessionInfo()
+```
+
+
+
+

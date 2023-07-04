@@ -1,0 +1,154 @@
+---
+title: "Figs2S 9 cell line scSeq heatmaps"
+output:
+  prettydoc::html_pretty:
+    theme: hpstr
+    highlight: github
+editor_options: 
+  chunk_output_type: inline
+---
+
+## Overview
+
+### This notebook prepares heatmaps of the 9 Ewing sarcoma cell line CITE-seq dataset sorted by expression of ECM, EMT, and EWS::FLI regulated gene sets (Figure 2S).
+
+```{r setup}
+knitr::opts_knit$set(root.dir = "C:/Users/ewrenn/OneDrive - SCH/CD73_paper_2023/paper files/MANUSCRIPT_R_PROJ/2023_CD73_manuscript")
+```
+
+
+## Set directories and figure settings
+
+```{r}
+#Set figure outputs
+knitr::opts_chunk$set(dpi=300,
+                      echo=TRUE, warning=FALSE, message=FALSE)
+knitr::opts_chunk$set(dev.args=list(bg="transparent"))
+knitr::opts_chunk$set(fig.path = "C:/Users/ewrenn/OneDrive - SCH/CD73_paper_2023/paper files/MANUSCRIPT_R_PROJ/2023_CD73_manuscript_GITHUB/figures/FIG4S_9-line-scseq_",  dev = c("svglite", "png"))
+```
+
+## Load libraries
+
+```{r message=FALSE, warning=FALSE}
+#load packages
+library(cowplot)
+library(ggplot2)
+library(dplyr)
+library(umap)
+library(RBGL)
+library(Vennerable)
+library(tibble)
+library(pheatmap)
+library(Seurat)
+library(SummarizedExperiment)
+library(SingleCellExperiment)
+library(sf)
+library(tidyverse)
+library(escape)
+library(dittoSeq)
+library(SeuratObject)
+library(msigdbr)
+library(Hmisc)
+```
+
+## Load 9 cell line CITE-seq object
+
+```{r}
+#load 9 cell line CITE-seq and single cell sequencing object
+s9 <- readRDS(file="./working_data/2022-6-3_aa_genename_cite_9.rds")
+```
+
+```{r umap_s9}
+#Visualize 9 cell line object
+DefaultAssay(s9) <- "SCT"
+Idents(s9) <- "CellLine"
+DimPlot(s9, group.by = "CellLine")
+
+```
+
+## Load and assign gene module scores
+
+```{r}
+#Load gene sets from msigdbr and text files
+H <- msigdbr(species = "Homo sapiens", category ="H")
+EMT <- filter(H, gs_name == "HALLMARK_EPITHELIAL_MESENCHYMAL_TRANSITION")
+EMT <- list(EMT$gene_symbol)
+
+CGP <- msigdbr(species = "Homo sapiens", category = "C2", subcategory = "CGP")
+kinsey_repressed <- filter(CGP, gs_name == "KINSEY_TARGETS_OF_EWSR1_FLII_FUSION_DN")
+kinsey_repressed <- list(kinsey_repressed$gene_symbol)
+kinsey_activated <- filter(CGP, gs_name == "KINSEY_TARGETS_OF_EWSR1_FLII_FUSION_UP")
+kinsey_activated <- list(kinsey_activated$gene_symbol)
+
+#Aynaud et al. 2020 list of 78 direct EWS::FLI1 targets
+IC_EWS_78 <- c(read.delim(file="./gene_lists/ICEWS_genes.txt", header=FALSE))
+
+#GO Biological Processes 2021 ECM Organization
+ECM_go <- c(read.delim(file="./gene_lists/gobp_2021_ecm_organization.txt", header=FALSE))
+
+
+```
+
+
+```{r}
+#Add score to each cell for each gene set using AddModuleScore function of Seurat
+s9 <- AddModuleScore(s9, features=EMT, name="EMT")
+s9 <- AddModuleScore(s9, features=kinsey_repressed, name="kinsey_repressed")
+s9 <- AddModuleScore(s9, features=kinsey_activated, name="kinsey_activated")
+s9 <- AddModuleScore(s9, features=IC_EWS_78, name="IC_EWS_78")
+s9 <- AddModuleScore(s9, features="NT5E", name="NT5E_count")
+s9 <- AddModuleScore(s9, features=ECM_go, name="ECM_GO")
+```
+
+
+```{r s9-NT5E-CD73}
+FeaturePlot(s9, features="rna_NT5E", cols=c('gray','deeppink3','blueviolet'), max.cutoff="q90")
+FeaturePlot(s9, features="adt_CD73", cols=c('gray','deeppink3','blueviolet'), max.cutoff="q90")
+```
+
+## Heatmap of overlap between Hallmark EMT and markers (top 200) of NT5E+ cells
+
+```{r EMT_top200_heatmap, fig.height=15, fig.width=12}
+DefaultAssay(s9) <- 'SCT'
+#Heatmap of Hallmark EMT overlap with the top 200 NT5E+ markers in the 9 cell line dataset, ranked by EMT
+dittoHeatmap(s9, genes=c("ITGB1","ECM1","TAGLN","SPARC","COL11A1" ,  "SERPINE1" , "TNC"    ,   "THY1"  ,    "FSTL1" ,    "LOXL1"   ,  "RGS4" ,     "GLIPR1",    "NT5E","EFEMP2"  ,  "LGALS1"  ,  "CALD1"    , "FLNA"   ,   "TIMP1" ,    "GADD45B"  , "TNFRSF12A", "TPM4"    ,  "IGFBP4"  ,  "MMP1"     , "TPM2"  ,    "TPM1"  ,   "IGFBP2"   , "FN1"   ,    "BGN"   ,    "EMP3"   ,  "COL1A1"    ,"ACTA2" ,    "COL1A2"   , "COL4A2",       "COL5A1" ,   "COL6A2" ,   "COL5A2"  ,  "MGP"     ,  "SNAI2" , "ITGA5"  ,   "VIM"     ,  "FMOD"    ,  "MYL9"     , "FERMT2",    "CD44" ,     "FBN1"), annot.by = c("EMT1", "CellLine", "NT5E_count1"),   heatmap.colors = colorRampPalette(c("blue3","blue", "white", "red","darkred"))(50))
+```
+
+
+## Heatmap of overlap between ECM organization and markers (top 200) of NT5E+ cells
+
+
+```{r ECM_top200_heatmap, fig.height=15, fig.width=12}
+#Heatmap of GOBP ECM organization overlap with the top 200 NT5E+ markers in the 9 cell line dataset, ranked by ECM organization
+library(viridis)
+mat_breaks <- seq(-5, 5, length.out = 51)
+DefaultAssay(s9) <- 'SCT'
+
+
+dittoHeatmap(s9,  genes=c("ITGB1" ,   "SPARC"  , "CD151"  ,  "COL11A1" , "SERPINE1", "TNC"    ,  "NID1"    , "LOXL1"  ,  "TIMP2"    ,"TIMP1"  ,  "TGFB2"  ,  "MMP1"   ,  "FN1"   ,   "BGN"  ,  "COL1A1"  , "COL1A2"  , "P4HA1"  ,  "COL4A2"  , "COL5A1" ,  "LOX"    ,  "COL6A2" ,  "COL5A2"  , "ITGA5"  ,  "CD44"   ,  "FBN1",  "PLEC"), scale = "row", annot.by = c("ECM_GO1", "CellLine", "NT5E_count1"), assay="SCT", breaks=mat_breaks, heatmap.colors = colorRampPalette(c("blue", "dodgerblue", "ivory",  "tomato", "red"))(51))
+
+
+```
+
+## Scatter plots of E::F regulated and other gene sets
+
+```{r scatter_EFlo_sets, fig.height=6, fig.width=6}
+
+FeatureScatter(s9, feature1="kinsey_repressed1", feature2="kinsey_activated1")
+FeatureScatter(s9, feature1="kinsey_repressed1", feature2="IC_EWS_781")
+
+FeatureScatter(s9, feature1="kinsey_activated1", feature2="ECM_GO1")
+FeatureScatter(s9, feature1="kinsey_activated1", feature2="EMT1")
+
+FeatureScatter(s9, feature1="IC_EWS_781", feature2="ECM_GO1")
+FeatureScatter(s9, feature1="IC_EWS_781", feature2="EMT1")
+               
+```
+
+
+
+## Session info
+```{r}
+sessionInfo()
+```
+

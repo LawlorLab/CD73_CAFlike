@@ -1,0 +1,230 @@
+---
+title: "Ewings1"
+author: "OW"
+date: "093021"
+output:
+  prettydoc::html_pretty:
+    theme: architect
+    highlight: github
+editor_options: 
+  chunk_output_type: console
+---
+
+
+```{r, warning=FALSE, message=FALSE, warning=FALSE, echo=F}
+#This notebook contains code used to generate and manipulate the 9 Ewing sarcoma cell line CITE-seq object
+
+graphics.off()
+rm(list=ls())
+knitr::opts_chunk$set(fig.width=8, fig.height=6,dpi=300,
+                      echo=FALSE, warning=FALSE, message=FALSE)
+knitr::opts_chunk$set(dev.args=list(bg="transparent"))
+ROOT_DIR<-"~/Fred Hutchinson Cancer Research Center"
+stem<-"Ewings - General/experiments/ewings1"
+DATA_DIR <- file.path(ROOT_DIR, stem, "data")      # SPECIFY HERE
+RES_DIR  <- file.path(ROOT_DIR, stem, "res")     # SPECIFY HERE
+RMD_DIR  <- file.path(ROOT_DIR, stem, "rmd")     # SPECIFY HERE
+CDS_DIR <- file.path(ROOT_DIR,  stem, "cds")
+FIG_DIR <- file.path(ROOT_DIR, stem, "figs")
+# ENR_DIR<-file.path(ROOT_DIR, "Bioinformatics Resources", "MSigDB")
+# SCRIPT_DIR<-file.path(ROOT_DIR, "develop", "SfScripts", "m3")
+
+suppressPackageStartupMessages({
+  library(monocle3)
+  library(m3addon)
+  library(openxlsx)  
+  library(dplyr)
+  library(Matrix)
+  library(ggplot2)
+  library(xfun)
+  library(pals)
+  library(RColorBrewer)
+  library(Seurat)
+  require(lattice)
+  library(patchwork)
+  library(BSgenome.Hsapiens.UCSC.hg38)
+})
+```
+
+```{r, formatting}
+xxlibrary(hdf5r)
+#py_config()
+xfun::pkg_load2(c('base64enc', 'htmltools', 'mime'))
+
+#py_available("Scrublet")
+#load_all(file.path(ROOT_DIR, "fstree"))
+# Set global ggplot2 properties for making print-scaled PDF panels
+SFtheme<-theme_bw(base_size=14) + 
+  theme(panel.background = element_rect(fill = "transparent",colour = NA), # or theme_blank()
+    panel.grid.minor = element_blank(), 
+    panel.grid.major = element_blank(),
+    legend.background = element_rect(fill = "transparent"),
+    legend.box.background = element_rect(fill = "transparent"), 
+    legend.key = element_rect(fill = "transparent", colour = NA),
+    plot.background = element_rect(fill = "transparent",colour = NA))
+theme_set(SFtheme)
+
+exp_colors<-c("grey85", "orange", "red", "violetred4", "black")
+
+qthresh<-0.05
+ethresh<-1.2
+cell_min<-5
+
+lots_color<-function(n){
+  if(n<434){
+  color = grDevices::colors()[grep('gr(a|e)y', grDevices::colors(), invert = T)]
+  sample(color, n)
+  }else{
+    stop("max 433 colors")
+  }
+}
+```
+
+```{r, load colors and object}
+cols<- c("#A6CEE3", "#3F9FDE","#33A02C","#5a3470","#F97876","#E73639", "#FDBF6F","#CAB2D6","#FF7F00", "#B5E08F")
+clus_cols<- c(  "#442288","#6CA2EA","#B5D33D","#FED23F","#EB7D5B","#CAB2D6","#A6CEE3", "#FB4D3D","#da45ed", "#218a2a", "#a448f0","#3F9FDE","#f52222" , "#B5E08F","#F97876","#E73639","#FF7F00","#5a3470")
+saveRDS(cite,file.path(CDS_DIR, "091621_cite.rds"))
+saveRDS(cite,file.path(CDS_DIR, "092921_cite.rds"))
+cite<-readRDS(file.path(CDS_DIR, "092921_cite.rds"))
+```
+
+```{r make CITE Objecct}
+
+folders<-list.files(DATA_DIR, full.names = T)[grepl("^E[0-9]", list.files(DATA_DIR))]
+samps<- c("E1", "E2", "E3")
+
+meta<-lapply(samps, function(sample){
+  tab<-read.table(
+  file = file.path(DATA_DIR, sample, "outs/metrics_summary.csv"),
+  stringsAsFactors = FALSE,
+  sep = ",",
+  header = TRUE,
+  row.names = 1
+  )
+  tab[tab$is_cell!=0, ]
+})
+
+i<-1
+seus_cr<-lapply(1:length(samps), function(i){
+  raw<-Read10X_h5(file.path(DATA_DIR, samps[[i]], "outs", "filtered_feature_bc_matrix.h5"))
+  rownames(raw[["Antibody Capture"]])<-c("CD73"  ,  "CD271"  , "CXCR4.1", "CD44.1" ,    "CD63.1" , "CD40.1" , "CD98"   , "CD39"   ,"CD56"  ,  "CD105"   ,"CD90" ,   "EGFR.1" , "CD99"  , "HTO1", "HTO2", "HTO3")
+  rownames(x = raw[["Antibody Capture"]]) <- gsub(pattern = "_[control_]*TotalSeqB", replacement = "",x = rownames(x = raw[["Antibody Capture"]]))
+  seu<-CreateSeuratObject(
+    counts = raw$`Gene Expression`, assay= "RNA", meta.data = meta[[i]])
+  prot<-raw[["Antibody Capture"]]
+  prot<-prot[!grepl("^HTO", rownames(prot)),]
+  prot<-jitter(as.matrix(prot), amount = 1)
+  seu[["ADT"]]<-CreateAssayObject(prot[, colnames(x = seu)])
+  seu$dataset<-samps[i]
+  seu
+})
+
+cite <- merge(
+  x = seus_cr[[1]],
+  y = seus_cr[2:length(seus_cr)],
+  add.cell.ids = samps
+)
+
+DefaultAssay(cite)<-"ADT"
+raw_hto<-lapply(1:length(samps), function(i){
+  raw<-Read10X_h5(file.path(DATA_DIR, samps[[i]], "outs", "filtered_feature_bc_matrix.h5"))
+  prot<-raw[["Antibody Capture"]]
+  prot<-prot[grepl("^HTO", rownames(prot)),]
+  prot
+})
+
+hto3<- lapply(raw_hto, function(x){
+  h<-x["HTO3",]
+  h
+}) 
+hto1<-unlist(hto1)
+cite$HTO1<-hto1
+
+hto2<-unlist(hto2)
+cite$HTO2<-hto2
+
+hto3<-unlist(hto3)
+cite$HTO3<-hto3
+thresh <-3
+cite$log_HTO1<- log(cite$HTO1)>thresh
+cite$log_HTO2<- log(cite$HTO2)>thresh
+cite$log_HTO3<- log(cite$HTO3)>thresh
+
+```
+
+```{r, Genotyping}
+pcvs<-lapply(1:length(samps), function(i){
+  ctsv<-read.table(file.path(DATA_DIR, samps[i], "souporcell/clusters.tsv"), header = T)
+  cs<-as.matrix(ctsv[,colnames(ctsv)[grep("^cluster", colnames(ctsv))]])
+  lt<-log(cs*-1)
+  pc<-princomp(lt)
+  pcv<-as.data.frame(pc$scores)
+  ltdf<-as.data.frame(lt)
+  ltdf$status<-ctsv$status
+  ltdf$assignment<-ctsv$assignment
+  pcv$status<-ctsv$status
+  pcv$assignment<-ctsv$assignment
+  pcv$sample<-paste0(samps[i],"_", ctsv$barcode)
+  pcv
+})
+
+pcvall<-do.call(rbind, pcvs)
+
+
+pcvfound<-pcvall[pcvall$sample %in% rownames(cite@meta.data),]
+table(colnames(cite) %in% pcvfound$sample)
+cite_full<-cite
+cite<-cite_full[,colnames(cite_full) %in% pcvfound$sample]
+cite$geno<-"Unknown"
+
+cite$geno[match(colnames(cite), pcvfound$sample)]<-pcvfound$assignment[match(pcvfound$sample, colnames(cite))]
+cite$genotype<-cite$geno
+cite$genotype[grepl("/", cite$genotype)]<-"Multiplet"
+cite<-cite[,!cite$genotype %in% "Multiplet"]
+
+d<-DimPlot(cite, group.by = 'dataset', pt.size = 0.1, reduction = "adt.umap")
+p<-DimPlot(cite, group.by = 'genotype', pt.size = 0.1, reduction = "adt.umap")
+p+d+q
+```
+
+```{r, naming Cell Lines}
+
+cite$CellLine<-cite$dataset
+cite$CellLine[cite$dataset=="E1" & cite$genotype == "0"]<-"A673"
+cite$CellLine[cite$dataset=="E1" & cite$genotype == "2"]<-"A4573"
+cite$CellLine[cite$dataset=="E1" & cite$genotype == "1"]<-"SKNMC"
+cite$CellLine[cite$dataset=="E2" & cite$genotype == "0" & cite$log_HTO1==T]<-"CHLA9"
+cite$CellLine[cite$dataset=="E2" & cite$genotype == "0" & cite$log_HTO2==T]<-"CHLA10"
+cite$CellLine[cite$dataset=="E2" & cite$genotype == "2"]<-"TC32"
+cite$CellLine[cite$dataset=="E3" & cite$genotype == "1"]<-"TC71"
+cite$CellLine[cite$dataset=="E3" & cite$genotype == "0"]<-"RDES"
+cite$CellLine[cite$dataset=="E3" & cite$genotype == "2"]<-"PDX305"
+barplot(table(cite$CellLine), col = cols)
+
+cite<-cite[,!cite$CellLine %in% "E2"]
+DimPlot(cite, group.by = "CellLine", reduction = "adt.umap", cols = cols)
+```
+
+```{r QC}
+DefaultAssay(cite) <- "RNA"
+cite<- cite[,cite@meta.data$log_RNA >= 3.5]
+cite<- cite[,cite@meta.data$log_ADT >= 2]
+cite<- cite[,cite@meta.data$percent.mt<15]
+
+
+cite$log_RNA<-log10(cite$nCount_RNA)
+
+cite[["percent.mt"]] <- PercentageFeatureSet(cite, pattern = "^MT-")
+cite$log_ADT<-log10(cite$nCount_ADT)
+
+cite$likely_dead <-cite$percent.mt>20
+
+VlnPlot(
+  object = cite,
+  features = c("log_RNA", "percent.mt", "log_ADT"),
+  group.by = "dataset",
+  ncol = 3,
+  pt.size = 0
+)
+```
+

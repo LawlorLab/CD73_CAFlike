@@ -1,0 +1,239 @@
+---
+title: "Figs1 and 1S CD73 sorted RNA-seq GSEA"
+output:
+  prettydoc::html_pretty:
+    theme: hpstr
+    highlight: github
+editor_options: 
+  chunk_output_type: console
+---
+## Overview
+
+### This notebook generates figures in Fig 1/1S from bulk RNA-seq of FACS sorted CD73- or CD73+ A673 or CHLA10 cells (gene set enrichment analysis). 
+
+## Load packages
+
+```{r}
+library(fgsea)
+library(data.table)
+library(ggplot2)
+```
+
+## Set WD and figure settings
+```{r}
+here::i_am("src/Fig2S_R_CD73_rnaseq_GSEA.Rmd")
+library(here)
+here()
+
+```
+
+```{r}
+#Set figure outputs
+knitr::opts_chunk$set(dpi=300,
+                      echo=TRUE, warning=FALSE, message=FALSE)
+knitr::opts_chunk$set(dev.args=list(bg="transparent"))
+knitr::opts_chunk$set(fig.path = "C:/Users/ewrenn/OneDrive - SCH/CD73_paper_2023/paper files/MANUSCRIPT_R_PROJ/2023_CD73_manuscript_GITHUB/figures/FIG1_FIG1S_FACS_RNAseq_GSEA_",  dev = c("svglite", "png"))
+```
+
+
+## Read Data
+```{r}
+#read data, DESeq outputs of RNA-seq of sorted CD73+ vs. CD73- cells in A673 and CHLA10 cell lines
+
+A673_contrast <- read.csv(file=here("working_data", "CD73POSvCD73NEG_A673_full.csv"), header=TRUE)
+CHLA10_contrast <- read.csv(file=here("working_data", "CD73POSvCD73NEG_CHLA10_full.csv"), header=TRUE)
+```
+
+
+```{r}
+#make unique names
+.rowNamesDF(A673_contrast, make.names=TRUE) <- A673_contrast$gene_name
+.rowNamesDF(CHLA10_contrast, make.names=TRUE) <- CHLA10_contrast$gene_name
+```
+
+
+
+
+```{r}
+
+# we want the log2 fold change 
+original_gene_list_A673 <- A673_contrast$log2FoldChange
+
+# name the vector
+names(original_gene_list_A673) <- A673_contrast$gene_name
+
+# omit any NA values 
+gene_list_A673<-na.omit(original_gene_list_A673)
+
+# sort the list in decreasing order (required for clusterProfiler)
+gene_list_A673 = sort(gene_list_A673, decreasing = TRUE)
+```
+
+
+```{r}
+
+# we want the log2 fold change 
+original_gene_list_CHLA10 <- CHLA10_contrast$log2FoldChange
+
+# name the vector
+names(original_gene_list_CHLA10) <- CHLA10_contrast$gene_name
+
+# omit any NA values 
+gene_list_CHLA10<-na.omit(original_gene_list_CHLA10)
+
+# sort the list in decreasing order (required for clusterProfiler)
+gene_list_CHLA10 = sort(gene_list_CHLA10, decreasing = TRUE)
+```
+
+
+## FGSEA for custom GSEA
+
+```{r}
+set.seed(42)
+```
+
+```{r}
+#Hallmarks GMT file, downloaded MsigDb
+Hgmt.file <- (here("gene_lists", "h.all.v2022.1.Hs.symbols.gmt"))
+H_pathways <- gmtPathways(Hgmt.file)
+
+#Custom gene sets of interest
+Custom_gmt <- (here("gene_lists", "custom_gmts.txt"))
+Custom_pathways <- gmtPathways(Custom_gmt)
+
+```
+
+## A673 Hallmark Enrichment
+
+```{r}
+fgseaResA673_Hallmarks <- fgsea(pathways = H_pathways, 
+                  stats    = gene_list_A673,
+                  minSize  = 15,
+                  maxSize  = 500)
+
+head(fgseaResA673_Hallmarks[order(pval), ])
+A673_hallmarks <- fgseaResA673_Hallmarks[order(pval), ]
+A673_hallmarks <- as.matrix(A673_hallmarks)
+write.csv(A673_hallmarks, file=here("figures", "A673_hallmarks_GSEA.csv"))
+```
+
+
+
+```{r A673_H}
+plotEnrichment(H_pathways[["HALLMARK_EPITHELIAL_MESENCHYMAL_TRANSITION"]],
+               gene_list_A673) + labs(title="HALLMARK EMT A673")
+
+plotEnrichment(H_pathways[["HALLMARK_E2F_TARGETS"]],
+               gene_list_A673) + labs(title="HALLMARK E2F A673")
+```
+## CHLA10 Hallmark enrichment 
+
+```{r}
+fgseaResCHLA10_Hallmarks <- fgsea(pathways = H_pathways, 
+                  stats    = gene_list_CHLA10,
+                  minSize  = 15,
+                  maxSize  = 500)
+
+head(fgseaResCHLA10_Hallmarks[order(pval), ])
+CHLA10_hallmarks <- fgseaResCHLA10_Hallmarks[order(pval), ]
+CHLA10_hallmarks <- as.matrix(CHLA10_hallmarks)
+write.csv(CHLA10_hallmarks, file=here("figures","CHLA10_hallmarks_GSEA.csv"))
+```
+
+
+
+```{r CHLA10_H}
+plotEnrichment(H_pathways[["HALLMARK_EPITHELIAL_MESENCHYMAL_TRANSITION"]],
+               gene_list_CHLA10) + labs(title="HALLMARK EMT CHLA10")
+
+plotEnrichment(H_pathways[["HALLMARK_E2F_TARGETS"]],
+               gene_list_CHLA10) + labs(title="HALLMARK E2F CHLA10")
+```
+## A673 E::F regulated enrichment
+
+```{r}
+fgseaResA673_Custom <- fgsea(pathways = Custom_pathways, 
+                  stats    = gene_list_A673,
+                  minSize  = 15,
+                  maxSize  = 500)
+
+head(fgseaResA673_Custom[order(pval), ])
+A673_Custom <- fgseaResA673_Custom[order(pval), ]
+A673_Custom <- as.matrix(A673_Custom)
+write.csv(A673_Custom, file=here("figures","A673_Custom_GSEA.csv"))
+```
+
+
+
+```{r A673_custom}
+plotEnrichment(Custom_pathways[["Kinsey_DN"]],
+               gene_list_A673) + labs(title="Kinsey DN A673")
+
+plotEnrichment(Custom_pathways[["Kinsey_UP"]],
+               gene_list_A673) + labs(title="Kinsey UP A673")
+
+plotEnrichment(Custom_pathways[["Riggi_direct_repressed"]],
+               gene_list_A673) + labs(title="Riggi DN A673")
+
+plotEnrichment(Custom_pathways[["Riggi_direct_activated"]],
+               gene_list_A673) + labs(title="Riggi UP A673")
+
+plotEnrichment(Custom_pathways[["Aynaud_IC_EWS"]],
+               gene_list_A673) + labs(title="IC-EWS A673")
+
+plotEnrichment(Custom_pathways[["KEGG_CELL_CYCLE"]],
+               gene_list_A673) + labs(title="KEGG Cell Cycle A673")
+
+
+plotEnrichment(Custom_pathways[["ECM_organization"]],
+               gene_list_A673) + labs(title="ECM Org A673")
+
+```
+## CHLA10 E::F regulated enrichment
+
+```{r}
+fgseaResCHLA10_Custom <- fgsea(pathways = Custom_pathways, 
+                  stats    = gene_list_CHLA10,
+                  minSize  = 15,
+                  maxSize  = 500)
+
+head(fgseaResCHLA10_Custom[order(pval), ])
+CHLA10_Custom <- fgseaResCHLA10_Custom[order(pval), ]
+CHLA10_Custom <- as.matrix(CHLA10_Custom)
+write.csv(CHLA10_Custom, file=here("figures","CHLA10_Custom_GSEA.csv"))
+```
+
+```{r CHLA10_custom}
+plotEnrichment(Custom_pathways[["Kinsey_DN"]],
+               gene_list_CHLA10) + labs(title="Kinsey DN CHLA10")
+
+plotEnrichment(Custom_pathways[["Kinsey_UP"]],
+               gene_list_CHLA10) + labs(title="Kinsey UP CHLA10")
+
+plotEnrichment(Custom_pathways[["Riggi_direct_repressed"]],
+               gene_list_CHLA10) + labs(title="Riggi DN CHLA10")
+
+plotEnrichment(Custom_pathways[["Riggi_direct_activated"]],
+               gene_list_CHLA10) + labs(title="Riggi UP CHLA10")
+
+plotEnrichment(Custom_pathways[["Aynaud_IC_EWS"]],
+               gene_list_CHLA10) + labs(title="IC-EWS CHLA10")
+
+plotEnrichment(Custom_pathways[["KEGG_CELL_CYCLE"]],
+               gene_list_CHLA10) + labs(title="KEGG Cell Cycle CHLA10")
+
+
+plotEnrichment(Custom_pathways[["ECM_organization"]],
+               gene_list_CHLA10) + labs(title="ECM Org CHLA10")
+
+```
+
+```{r gsea_tables, echo=TRUE}
+
+plotGseaTable(Custom_pathways, gene_list_A673, fgseaResA673_Custom, 
+              gseaParam = 0.5)
+
+plotGseaTable(Custom_pathways, gene_list_CHLA10, fgseaResCHLA10_Custom, 
+              gseaParam = 0.5)
+
+```

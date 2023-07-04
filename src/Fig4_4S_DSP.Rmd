@@ -1,0 +1,214 @@
+---
+title: "Figs4 and 4S - GeoMx DSP of CHLA10 xenografts"
+output:
+  prettydoc::html_pretty:
+    theme: hpstr
+    highlight: github
+editor_options: 
+  chunk_output_type: console
+---
+## Overview
+
+### This notebook analyzes Nanostring GeoMx digital spatial profiling data (HWTA v1.0, Human Whole Transcriptome Analysis) of CHLA10 xenografts (ROIs1-4: subcutaneous tumor in NSG mouse #1, ROIs4-8: tail vein injection-derived liver tumor in NSG mouse #2, ROIs9-12: tail vein injection-derived retroperitoneal tumor in NSG mouse #3) and generates figures from Figure 4 and 4S (PCA, scatterplots, and heatmaps). 
+
+```{r}
+here::i_am("src/Fig4_4S_DSP.Rmd")
+library(here)
+here()
+```
+
+
+## Set directories and figure settings
+
+```{r}
+#Set figure outputs
+knitr::opts_chunk$set(dpi=300,
+                      echo=TRUE, warning=FALSE, message=FALSE)
+knitr::opts_chunk$set(dev.args=list(bg="transparent"))
+knitr::opts_chunk$set(fig.path = "C:/Users/ewrenn/OneDrive - SCH/CD73_paper_2023/paper files/MANUSCRIPT_R_PROJ/2023_CD73_manuscript_GITHUB/figures/FIG4_FIG4S_GeomxDSP_",  dev = c("svglite", "png"))
+```
+
+## Load libraries
+
+```{r message=FALSE, warning=FALSE}
+
+library(cowplot)
+library(ggplot2)
+library(dplyr)
+library(umap)
+library(RBGL)
+library(Vennerable)
+library(tibble)
+library(pheatmap)
+library(Seurat)
+#library(devtools)
+library(SummarizedExperiment)
+library(SingleCellExperiment)
+library(sf)
+library(tidyverse)
+library(escape)
+library(dittoSeq)
+library(SeuratObject)
+library(msigdbr)
+library(Hmisc)
+library(Biobase)
+library(RColorBrewer)
+library(viridis)
+library(ggfortify)
+```
+
+## Load gene sets of interest
+
+```{r}
+#Load gene sets from msigdbr and text files
+H <- msigdbr(species = "Homo sapiens", category ="H")
+EMT <- filter(H, gs_name == "HALLMARK_EPITHELIAL_MESENCHYMAL_TRANSITION")
+EMT <- list(EMT$gene_symbol)
+
+CGP <- msigdbr(species = "Homo sapiens", category = "C2", subcategory = "CGP")
+kinsey_repressed <- filter(CGP, gs_name == "KINSEY_TARGETS_OF_EWSR1_FLII_FUSION_DN")
+kinsey_repressed <- list(kinsey_repressed$gene_symbol)
+kinsey_activated <- filter(CGP, gs_name == "KINSEY_TARGETS_OF_EWSR1_FLII_FUSION_UP")
+kinsey_activated <- list(kinsey_activated$gene_symbol)
+
+#Aynaud et al. 2020 list of 78 direct EWS::FLI1 targets
+IC_EWS_78 <- c(read.delim(file=here("gene_lists","ICEWS_genes.txt"), header=FALSE))
+
+#GO Biological Processes 2021 ECM Organization
+ECM_go <- c(read.delim(file=here("gene_lists","gobp_2021_ecm_organization.txt"), header=FALSE))
+
+
+```
+
+## Read Q3 normalized whole human transcript counts for each ROI
+```{r}
+geomx_q3 <- read.csv(here("working_data","geomx_chla10_q3_norm.csv"),
+                     sep = ',', header = T, row.names=1)
+```
+
+
+## PCA analysis of ROI transcript data
+
+```{r DSP_PCA}
+#PCA
+pca_q3 <- prcomp(t(geomx_q3), scale.=TRUE)
+autoplot(pca_q3, label=TRUE, shape=TRUE, label.size=2)
+
+#visualize PCA component contributions
+library(factoextra)
+p <- fviz_eig(pca_q3, addlabels=TRUE, hjust = -0.3,
+               barfill="white", barcolor ="darkblue",
+               linecolor ="red") + ylim(0, 85) + 
+               theme_minimal()
+print(p)
+
+pc1_components <- fviz_contrib(pca_q3, choice = "var", axes = 1, top = 30)
+print(pc1_components)
+
+pc2_components <- fviz_contrib(pca_q3, choice = "var", axes = 2, top = 30)
+print(pc2_components)
+
+pc3_components <- fviz_contrib(pca_q3, choice = "var", axes = 3, top = 30)
+print(pc3_components)
+
+#prettier map of PCA
+fviz_pca_ind(pca_q3, col.ind = "cos2",
+             gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),
+             repel = TRUE # Avoid text overlapping (slow if many points)
+             )
+```
+
+## Use Seurat to add module scores to expression data in the same manner as CITE-seq data
+
+```{r}
+geomx_pdata <- read.csv(file=here("working_data","nanostring_dsp_pilot_q3_pdata.csv"), header = TRUE, row.names = 1)
+
+geomx_seurat <- CreateSeuratObject(geomx_q3, project = "SeuratProject", assay = "RNA",
+ min.cells = 0, min.features = 0, names.field = 1,
+  names.delim = "_", meta.data = geomx_pdata)
+```
+
+
+  
+```{r}
+geomx_seurat <-AddModuleScore(geomx_seurat, features="NT5E", name="NT5E_count")
+geomx_seurat <-AddModuleScore(geomx_seurat, features=c(EMT), name="EMT")
+geomx_seurat <-AddModuleScore(geomx_seurat, features=c(ECM_go), name="ECM_go")
+geomx_seurat <-AddModuleScore(geomx_seurat, features=c(kinsey_activated), name="kinsey_up")
+geomx_seurat <-AddModuleScore(geomx_seurat, features=c(kinsey_repressed), name="kinsey_dn")
+geomx_seurat <-AddModuleScore(geomx_seurat, features=c(IC_EWS_78), name="IC_EWS_78")
+```
+
+
+```{r}
+pdata_with_modules <- geomx_seurat[[]]
+write.csv(pdata_with_modules, file=here("working_data","geomx_pdata_modules.csv"))
+```
+
+
+## Heatmap of gene expression annotated for gene set modules
+
+```{r Heatmaps_DSP_modules, fig.height=12, fig.width=12}
+
+dittoHeatmap(geomx_seurat, annot.by = c("EMT1", "ECM_go1", "NT5E_count1" ,"kinsey_up1","kinsey_dn1","name"),   heatmap.colors = colorRampPalette(c("blue", "white", "red"))(50), show_rownames = FALSE, show_colnames = TRUE)
+
+
+```
+
+## Correlate module scores across ROIs
+
+```{r correlations, fig.height=8, fig.width=12}
+
+
+FeatureScatter(geomx_seurat, feature1="ECM_go1", feature2="kinsey_dn1", pt.size=8, group.by="name")
+FeatureScatter(geomx_seurat, feature1="kinsey_up1", feature2="kinsey_dn1", pt.size=8, group.by="name")
+
+
+```
+
+
+## Calculate coefficient of variation for each gene
+```{r}
+geomx_q3_log <- log(geomx_q3, base=2)
+geomx_q3_cv <- geomx_q3_log
+geomx_q3_cv$CV <- apply(geomx_q3_cv,1, function(x) sd(x) / mean(x) * 100)
+```
+
+
+```{r, set-quantile-cutoff-for-HVGs}
+#Identify top 20% of highly spatially variable genes by coefficient of variation
+quanti_cutoff <- quantile(geomx_q3_cv$CV, 0.8)
+quanti_cutoff
+
+library(dplyr) 
+HVG <- geomx_q3_cv%>% filter(CV>quanti_cutoff)
+HVG_genes <- row.names(HVG)
+```
+
+
+## Heatmaps of highly variable genes
+```{r}
+#make expression set object of data for heatmaps later
+q3norm <- as.matrix(geomx_q3)
+q3assay <- ExpressionSet(assayData=q3norm)
+pData(q3assay) <- pdata_with_modules
+```
+
+```{r, heatmap-hvgs-20th-percentile}
+
+
+pheatmap(assayDataElement(q3assay[HVG_genes, ], elt = "exprs"),
+         scale = "row", 
+         show_rownames = TRUE, show_colnames = TRUE,
+         border_color = NA,
+         main = "Top 20% most spatially variable genes",
+         clustering_method = "average",
+         clustering_distance_rows = "correlation",
+         clustering_distance_cols = "correlation",
+         breaks = seq(-3, 3, 0.05),
+         color = viridis(120),
+         annotation_col = 
+             pData(q3assay)[, c("name", "sample", "NT5E_log2", "EMT1", "ECM_go1")])
+```
+
+
